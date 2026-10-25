@@ -16,11 +16,10 @@ fn detectEmacsInclude(b: *std.Build) ?[]const u8 {
         \\                candidates)))
         \\    (when found (message "%s" found))))
     ;
-    const result = std.process.Child.run(.{
-        .allocator = b.allocator,
+    const result = std.process.run(b.allocator, b.graph.io, .{
         .argv = &.{ "emacs", "--batch", "--eval", expr },
     }) catch return null;
-    if (result.term != .Exited or result.term.Exited != 0) return null;
+    if (!result.term.success()) return null;
     const path = std.mem.trim(u8, result.stderr, &std.ascii.whitespace);
     if (path.len == 0) return null;
     return b.dupe(path);
@@ -49,7 +48,13 @@ pub fn build(b: *std.Build) void {
     ) orelse detectEmacsInclude(b) orelse
         "/Applications/Emacs.app/Contents/Resources/include";
 
-    lib_mod.addSystemIncludePath(.{ .cwd_relative = emacs_include });
+    // @cImport was removed in Zig 0.17; translate the header in the build instead.
+    const emacs_c = b.addTranslateC(.{
+        .root_source_file = .{ .cwd_relative = b.pathJoin(&.{ emacs_include, "emacs-module.h" }) },
+        .target = target,
+        .optimize = optimize,
+    });
+    lib_mod.addImport("emacs_c", emacs_c.createModule());
 
     // Add ghostty-vt dependency.
     // emit-lib-vt=true builds only libghostty-vt, skipping the macOS app,

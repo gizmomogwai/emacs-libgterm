@@ -1,11 +1,9 @@
 //! Zig bindings for the Emacs dynamic module API (emacs-module.h).
 //!
 //! The struct layout is generated from the actual emacs-module.h header
-//! using @cImport, ensuring ABI compatibility with any Emacs version.
+//! by translate-c in build.zig, ensuring ABI compatibility with any Emacs version.
 
-pub const c = @cImport({
-    @cInclude("emacs-module.h");
-});
+pub const c = @import("emacs_c");
 
 // Re-export the key types for convenience
 pub const emacs_env = c.emacs_env;

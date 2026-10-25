@@ -29,7 +29,7 @@ const page_mod = ghostty_vt.page;
 
 // We use the general purpose allocator since terminal instances are
 // long-lived and few in number.
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var gpa: std.heap.DebugAllocator(.{}) = .init;
 const allocator: Allocator = gpa.allocator();
 
 // ── Global Emacs symbol refs (initialized at module load) ───────────
@@ -94,7 +94,7 @@ const GtermInstance = struct {
 
     pub fn init(cols: u16, rows: u16) !*GtermInstance {
         const self = try allocator.create(GtermInstance);
-        self.terminal = try .init(allocator, .{
+        self.terminal = try .init(std.Io.Threaded.global_single_threaded.io(), allocator, .{
             .cols = cols,
             .rows = rows,
             // Enable linefeed mode: LF (\n) implies CR (\r).
@@ -161,7 +161,7 @@ const GtermInstance = struct {
             } }) orelse continue;
 
             // Get the row's cells
-            const page = &pin.node.data;
+            const page = pin.node.page();
             const page_row = page.getRow(pin.y);
             const page_cells = page.getCells(page_row);
 
@@ -280,7 +280,7 @@ const GtermInstance = struct {
 
     /// Resize the terminal.
     pub fn resize(self: *GtermInstance, cols: u16, rows: u16) !void {
-        try self.terminal.resize(allocator, cols, rows);
+        try self.terminal.resize(allocator, .{ .cols = cols, .rows = rows });
         self.cols = cols;
         self.rows = rows;
     }
@@ -423,7 +423,7 @@ fn gtermRender(
             .y = row,
         } }) orelse continue;
 
-        const page = &pin.node.data;
+        const page = pin.node.page();
         const page_row = page.getRow(pin.y);
         const page_cells = page.getCells(page_row);
 
@@ -675,7 +675,7 @@ fn gtermRenderDirty(
         }
 
         // Render the row content
-        const page = &pin.node.data;
+        const page = pin.node.page();
         const page_row = page.getRow(pin.y);
         const page_cells = page.getCells(page_row);
 
@@ -756,7 +756,8 @@ fn gtermRenderDirty(
     if (any_dirty) {
         var page_node = page_list.pages.first;
         while (page_node) |p| : (page_node = p.next) {
-            p.data.dirty = false;
+            // Compressed pages are not on screen; skip them rather than decompress.
+            if (p.pageIfResident()) |pg| pg.dirty = false;
         }
     }
 
