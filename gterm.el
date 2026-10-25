@@ -233,7 +233,8 @@ PROCESS is the shell process. OUTPUT is the raw string."
     (when (buffer-live-p buf)
       (with-current-buffer buf
         (when gterm--term
-          (gterm-feed gterm--term output)
+          (when-let* ((reply (gterm-feed gterm--term output)))
+            (process-send-string process reply))
           ;; Only auto-scroll to bottom if we were already at bottom
           (unless gterm--scrollback-p
             (when (fboundp 'gterm-scroll-viewport)

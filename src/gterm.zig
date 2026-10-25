@@ -88,6 +88,9 @@ fn initGlobalSymbols(env: *emacs.emacs_env) void {
 const GtermInstance = struct {
     terminal: Terminal,
     stream: ghostty_vt.TerminalStream,
+    /// Replies to terminal queries (e.g. DA1), collected during feed and
+    /// handed back to Elisp to write to the PTY.
+    replies: std.ArrayList(u8) = .empty,
     rows: u16,
     cols: u16,
     freed: bool = false,
@@ -107,15 +110,30 @@ const GtermInstance = struct {
         // so escape sequences split across PTY output chunks are
         // handled correctly.
         self.stream = self.terminal.vtStream();
+        // Answer queries; shells like fish 4 block until DA1 is answered.
+        self.stream.handler.effects.write_pty = &writePty;
+        self.stream.handler.effects.device_attributes = &deviceAttributes;
+        self.replies = .empty;
         self.rows = rows;
         self.cols = cols;
         return self;
+    }
+
+    fn writePty(handler: *ghostty_vt.TerminalStream.Handler, data: []const u8) void {
+        const stream: *ghostty_vt.TerminalStream = @fieldParentPtr("handler", handler);
+        const self: *GtermInstance = @fieldParentPtr("stream", stream);
+        self.replies.appendSlice(allocator, data) catch {};
+    }
+
+    fn deviceAttributes(_: *ghostty_vt.TerminalStream.Handler) ghostty_vt.device_attributes.Attributes {
+        return .{};
     }
 
     pub fn deinit(self: *GtermInstance) void {
         if (self.freed) return;
         self.freed = true;
         self.stream.deinit();
+        self.replies.deinit(allocator);
         self.terminal.deinit(allocator);
         // Note: we do NOT call allocator.destroy(self) here.
         // The GtermInstance memory must remain valid until the GC
@@ -843,7 +861,9 @@ fn gtermFeed(
     const data_len: usize = @intCast(len - 1);
     instance.feed(buf[0..data_len]);
 
-    return emacs.nil(e);
+    if (instance.replies.items.len == 0) return emacs.nil(e);
+    defer instance.replies.clearRetainingCapacity();
+    return e.make_unibyte_string.?(e, instance.replies.items.ptr, @intCast(instance.replies.items.len));
 }
 
 /// (gterm-content TERM) -> string
@@ -1043,7 +1063,7 @@ export fn emacs_module_init(runtime: ?*emacs.emacs_runtime) callconv(.c) c_int {
     );
 
     emacs.defun(env, "gterm-feed", 2, 2, &gtermFeed,
-        "Feed raw bytes into a gterm terminal.\nTERM is a terminal handle from `gterm-new'.\nBYTES is a unibyte string of terminal output.",
+        "Feed raw bytes into a gterm terminal.\nTERM is a terminal handle from `gterm-new'.\nBYTES is a unibyte string of terminal output.\nReturns replies to terminal queries as a unibyte string to write to the PTY, or nil.",
     );
 
     emacs.defun(env, "gterm-content", 1, 1, &gtermContent,
